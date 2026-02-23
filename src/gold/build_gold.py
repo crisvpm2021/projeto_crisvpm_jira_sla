@@ -1,14 +1,12 @@
 import sys
-import pandas as pd
 from pathlib import Path
+import pandas as pd
 
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
 
-from src.sla_calculation import business_hours_between
+from src.sla_calculation import business_hours_between, build_holiday_set
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 SILVER_FILE = PROJECT_ROOT / "data" / "silver" / "silver_issues.parquet"
 GOLD_DIR = PROJECT_ROOT / "data" / "gold"
@@ -19,7 +17,7 @@ REPORT_BY_ISSUE_TYPE = GOLD_DIR / "gold_sla_by_issue_type.csv"
 
 
 def main():
-    print("=== GOLD BUILD (V2 - business days, no holidays yet) ===")
+    print("=== GOLD BUILD (V3 - business days + holidays) ===")
 
     df = pd.read_parquet(SILVER_FILE)
 
@@ -34,9 +32,19 @@ def main():
     df["sla_expected_hours"] = df["priority"].map(sla_map)
     df = df[df["sla_expected_hours"].notna()].copy()
 
-    # Business-hours resolution (Mon-Fri only)
+    # Build holiday set for all years in the dataset
+    years = set(df["created_at"].dt.year.dropna().astype(int).tolist() + df["resolved_at"].dt.year.dropna().astype(int).tolist())
+    print(f"Fetching Brazilian national holidays for years: {sorted(years)}")
+    holidays = build_holiday_set(years)
+    print(f"Total holidays loaded: {len(holidays)}")
+
+    # Business-hours resolution (Mon-Fri, excluding holidays)
     df["resolution_business_hours"] = df.apply(
-        lambda r: business_hours_between(r["created_at"].to_pydatetime(), r["resolved_at"].to_pydatetime()),
+        lambda r: business_hours_between(
+            r["created_at"].to_pydatetime(),
+            r["resolved_at"].to_pydatetime(),
+            holidays,
+        ),
         axis=1,
     )
 
@@ -102,9 +110,9 @@ def main():
     )
     report_by_issue_type.to_csv(REPORT_BY_ISSUE_TYPE, index=False, encoding="utf-8")
 
-    print(f" Gold dataset saved: {GOLD_OUTPUT}")
-    print(f" Report saved: {REPORT_BY_ANALYST}")
-    print(f" Report saved: {REPORT_BY_ISSUE_TYPE}")
+    print(f"✅ Gold dataset saved: {GOLD_OUTPUT}")
+    print(f"✅ Report saved: {REPORT_BY_ANALYST}")
+    print(f"✅ Report saved: {REPORT_BY_ISSUE_TYPE}")
     print(f"Gold rows: {len(df_gold)}")
     print("Overall SLA met rate (%):", round(df_gold["is_sla_met"].mean() * 100, 2))
 
